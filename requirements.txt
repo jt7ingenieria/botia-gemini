@@ -2,3 +2,9 @@ pandas
 numpy
 pytest
 SQLAlchemy
+redis
+prometheus_client
+statsmodels
+scikit-learn
+scipy
+joblib
