@@ -72,54 +72,47 @@ def test_monte_carlo_simulator_simulate():
 
 def test_financial_predictor_train(sample_dataframe, sample_processed_dataframe):
     with patch('src.strategy.DataProcessor.preprocess', return_value=sample_processed_dataframe) as mock_preprocess:
-        with patch('src.strategy.ARIMAModel.cross_validate') as mock_arima_cv:
-            with patch('src.strategy.GaussianProcessModel.fit') as mock_gp_fit:
-                with patch('src.strategy.BayesianRidge.fit') as mock_bayesian_fit:
-                    with patch('src.strategy.MonteCarloSimulator.calibrate') as mock_mc_calibrate:
-                        with patch('src.strategy.GradientBoostingRegressor.fit') as mock_ensemble_fit:
+        with patch('src.strategy.ARIMAModel') as MockARIMAModel:
+            with patch('src.strategy.GaussianProcessModel') as MockGaussianProcessModel:
+                with patch('src.strategy.BayesianRidge') as MockBayesianRidge:
+                    with patch('src.strategy.MonteCarloSimulator') as MockMonteCarloSimulator:
+                        with patch('src.strategy.GradientBoostingRegressor') as MockGradientBoostingRegressor:
                             with patch('src.strategy.FinancialPredictor.save_model') as mock_save_model:
                                 
-                                predictor = FinancialPredictor(model_path='test_model.joblib')
-                                
                                 # Configurar los mocks para que simulen el entrenamiento
-                                # Mockear los métodos directamente en las instancias de los modelos del predictor
-                                mock_arima_model_instance = MagicMock()
-                                mock_arima_model_instance.model = MagicMock()
-                                mock_arima_model_instance.model.forecast.return_value = np.array([100] * len(sample_processed_dataframe))
-                                mock_arima_cv.return_value = mock_arima_model_instance
-                                predictor.models['arima'] = mock_arima_model_instance # Asignar el mock al modelo ARIMA
+                                mock_arima_instance = MagicMock()
+                                mock_arima_instance.model = MagicMock()
+                                mock_arima_instance.model.forecast.return_value = np.array([100] * len(sample_processed_dataframe))
+                                MockARIMAModel.return_value = mock_arima_instance
                                 
-                                mock_gp_model_instance = MagicMock()
-                                mock_gp_model_instance.model = MagicMock()
-                                mock_gp_model_instance.model.predict.return_value = np.array([100] * len(sample_processed_dataframe))
-                                mock_gp_fit.return_value = mock_gp_model_instance
-                                predictor.models['gp'] = mock_gp_model_instance # Asignar el mock al modelo GP
+                                mock_gp_instance = MagicMock()
+                                mock_gp_instance.model = MagicMock()
+                                mock_gp_instance.model.predict.return_value = np.array([100] * len(sample_processed_dataframe))
+                                MockGaussianProcessModel.return_value = mock_gp_instance
                                 
-                                mock_bayesian_model_instance = MagicMock()
-                                mock_bayesian_model_instance.predict.return_value = np.array([100] * len(sample_processed_dataframe))
-                                mock_bayesian_fit.return_value = mock_bayesian_model_instance
-                                predictor.models['bayesian'] = mock_bayesian_model_instance # Asignar el mock al modelo Bayesian
+                                mock_bayesian_instance = MagicMock()
+                                mock_bayesian_instance.predict.return_value = np.array([100] * len(sample_processed_dataframe))
+                                MockBayesianRidge.return_value = mock_bayesian_instance
                                 
                                 mock_montecarlo_instance = MagicMock()
-                                mock_montecarlo_instance.calibrate.return_value = {} # Calibrate no devuelve un modelo
+                                mock_montecarlo_instance.calibrate.return_value = {}
                                 mock_montecarlo_instance.simulate.return_value = 100
-                                mock_mc_calibrate.return_value = mock_montecarlo_instance
-                                predictor.models['montecarlo'] = mock_montecarlo_instance # Asignar el mock al simulador Monte Carlo
+                                MockMonteCarloSimulator.return_value = mock_montecarlo_instance
                                 
-                                mock_ensemble_model_instance = MagicMock()
-                                mock_ensemble_model_instance.predict.return_value = np.array([100] * len(sample_processed_dataframe))
-                                mock_ensemble_fit.return_value = mock_ensemble_model_instance
-                                predictor.models['ensemble'] = mock_ensemble_model_instance # Asignar el mock al modelo Ensemble
+                                mock_ensemble_instance = MagicMock()
+                                mock_ensemble_instance.predict.return_value = np.array([100] * len(sample_processed_dataframe))
+                                MockGradientBoostingRegressor.return_value = mock_ensemble_instance
                                 
+                                predictor = FinancialPredictor(model_path='test_model.joblib')
                                 predictor.train(sample_dataframe, save_model=True)
                                 
                                 assert predictor.trained is True
                                 mock_preprocess.assert_called_once()
-                                predictor.models['arima'].cross_validate.assert_called_once()
-                                predictor.models['gp'].fit.assert_called_once()
-                                predictor.models['bayesian'].fit.assert_called_once()
-                                predictor.models['montecarlo'].calibrate.assert_called_once()
-                                predictor.models['ensemble'].fit.assert_called_once()
+                                MockARIMAModel.return_value.cross_validate.assert_called_once()
+                                MockGaussianProcessModel.return_value.fit.assert_called_once()
+                                MockBayesianRidge.return_value.fit.assert_called_once()
+                                MockMonteCarloSimulator.return_value.calibrate.assert_called_once()
+                                MockGradientBoostingRegressor.return_value.fit.assert_called_once()
                                 mock_save_model.assert_called_once()
 
 def test_financial_predictor_predict(sample_dataframe, sample_processed_dataframe):
