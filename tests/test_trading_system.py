@@ -1,0 +1,1 @@
+[Contenido del archivo test_trading_system.py]
