@@ -1,9 +1,10 @@
 import pandas as pd
 import logging
+import numpy as np
+import matplotlib.pyplot as plt # Importar matplotlib
 
-from src.data_fetcher import fetch_historical_data
-from src.strategy import FinancialPredictor
-from src.backtesting import ModelEvaluator
+from src.data_fetcher import generate_market_data # Importar la función de generación de datos
+from src.trading_system import LiveLearningTradingSystem # Importar la clase principal del sistema
 from src.utils import log_message
 
 # Configurar logging
@@ -13,39 +14,55 @@ logger = logging.getLogger(__name__)
 def main():
     log_message("Iniciando el bot de trading...")
 
-    # Ejemplo de uso del FinancialPredictor y ModelEvaluator
-    # NOTA: Necesitarás un archivo 'financial_data.csv' con columnas 'date', 'open', 'high', 'low', 'close', 'volume'
-    # Por ahora, usaremos un placeholder o generaremos datos si no existe el archivo.
-    try:
-        # Intentar cargar datos reales si existen
-        data = pd.read_csv('financial_data.csv', parse_dates=['date'], index_col='date')
-        log_message("Datos cargados desde financial_data.csv")
-    except FileNotFoundError:
-        log_message("financial_data.csv no encontrado. Generando datos de ejemplo...")
-        # Generar datos de ejemplo si el archivo no existe
-        # Usaremos fetch_historical_data para generar datos de ejemplo
-        data = fetch_historical_data(symbol="EXAMPLE", interval="1d", start_date="2020-01-01", end_date="2023-12-31")
-        # Asegurarse de que las columnas sean 'open', 'high', 'low', 'close', 'volume'
-        data.rename(columns={'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'}, inplace=True)
-        log_message("Datos de ejemplo generados.")
-
-    predictor = FinancialPredictor()
+    # Generar datos de mercado
+    market_data = generate_market_data(num_points=1000)
     
-    # Entrenar con una parte de los datos históricos
-    train_data = data.iloc[:-100]
-    predictor.train(train_data)  
-    log_message("Modelo entrenado.")
+    # Crear sistema de trading
+    trading_system = LiveLearningTradingSystem(commission_rate=0.001)
     
-    # Predicción
-    historical_for_prediction = data.iloc[-100:]
-    forecasts = predictor.predict(historical_for_prediction, steps=5)
-    log_message(f"Pronóstico a 5 pasos: {forecasts}")
+    # Ejecutar backtesting
+    results = trading_system.run_backtest(market_data, "trading_system_state.joblib")
     
-    # Evaluación
-    evaluator = ModelEvaluator()
-    test_data = data.iloc[-100:]
-    mse = evaluator.evaluate(predictor, test_data)
-    log_message(f"Error Cuadrático Medio (MSE) en el test: {mse:.4f}")
+    # Mostrar resultados
+    print("\n" + "="*60)
+    print("RESULTADOS FINALES DEL BACKTESTING CON APRENDIZAJE CONTINUO")
+    print("="*60)
+    for k, v in results.items():
+        if k == 'model_performance':
+            print("\nRendimiento por Versión del Modelo:")
+            for ver, metrics in v.items():
+                win_rate = metrics['wins'] / metrics['trades'] if metrics['trades'] > 0 else 0
+                avg_pl = metrics['pl'] / metrics['trades'] if metrics['trades'] > 0 else 0
+                print(f"  Versión {ver}: {metrics['trades']} operaciones, "
+                      f"{win_rate*100:.1f}% win rate, PL promedio: ${avg_pl:.2f}")
+        elif k == 'learning_log':
+            print("\nRegistro de Aprendizaje:")
+            for log in v:
+                print(f"  Período {log['period']}: Entrenado modelo v{log['model_version']} "
+                      f"con {log['window_size']} muestras")
+        else:
+            if isinstance(v, float):
+                print(f"{k.replace('_', ' ').title()}: {v*100 if 'rate' in k or 'drawdown' in k else v:.4f}"
+                      f"{'%' if 'rate' in k or 'drawdown' in k else ''}")
+            else:
+                print(f"{k.replace('_', ' ').title()}: {v}")
+    
+    # Visualizar resultados
+    trading_system.plot_results()
+    
+    # Mostrar curva de aprendizaje
+    learning_log = results['learning_log']
+    if learning_log:
+        plt.figure(figsize=(10, 6))
+        periods = [log['period'] for log in learning_log]
+        window_sizes = [log['window_size'] for log in learning_log]
+        
+        plt.plot(periods, window_sizes, 'o-')
+        plt.title('Evolución del Tamaño de la Ventana de Entrenamiento')
+        plt.xlabel('Período de Entrenamiento')
+        plt.ylabel('Tamaño de Ventana')
+        plt.grid(True)
+        plt.show()
     
     log_message("Bot de trading finalizado.")
 

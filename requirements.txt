@@ -8,3 +8,6 @@ statsmodels
 scikit-learn
 scipy
 joblib
+matplotlib
+seaborn
+tqdm

@@ -37,6 +37,7 @@ class DataProcessor:
         # Volatilidad
         df['volatility_5'] = df['returns'].rolling(5).std()
         df['volatility_10'] = df['returns'].rolling(10).std()
+        df['volatility_20'] = df['returns'].rolling(20).std() # Añadido
         
         # RSI con manejo de división por cero
         delta = df['close'].diff()
@@ -55,6 +56,13 @@ class DataProcessor:
         df['ema26'] = df['close'].ewm(span=26, adjust=False).mean()
         df['macd'] = df['ema12'] - df['ema26']
         df['signal'] = df['macd'].ewm(span=9, adjust=False).mean()
+
+        # ATR (Average True Range) - Añadido
+        high_low = df['high'] - df['low']
+        high_close = np.abs(df['high'] - df['close'].shift())
+        low_close = np.abs(df['low'] - df['close'].shift())
+        df['tr'] = np.max(np.array([high_low, high_close, low_close]).T, axis=1)
+        df['atr'] = df['tr'].rolling(window).mean()
         
         return df.dropna()
 
