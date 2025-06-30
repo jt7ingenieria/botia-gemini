@@ -76,6 +76,13 @@ Este proyecto implementa un bot de trading basado en inteligencia artificial con
     ```
     El bot ejecutará el backtesting, imprimirá los resultados en la consola y generará gráficos de rendimiento.
 
+3.  **Optimización de Hiperparámetros:**
+    Para encontrar la combinación óptima de parámetros e hiperparámetros que maximice la rentabilidad y minimice el riesgo, puedes ejecutar el script de optimización:
+    ```bash
+    python optimize.py
+    ```
+    Este script utilizará optimización bayesiana para explorar el espacio de búsqueda definido en `optimize.py` y reportará los mejores parámetros encontrados. Ten en cuenta que este proceso puede ser computacionalmente intensivo y tomar tiempo.
+
 ## Optimización y Experimentación
 
 La capacidad de configurar los parámetros a través de `config.py` es crucial para la optimización. Se recomienda:
