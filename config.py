@@ -4,6 +4,7 @@
 BOT_CONFIG = {
     "num_market_data_points": 1000,
     "commission_rate": 0.001,
+    "initial_balance": 10000,
     "trading_system_state_file": "trading_system_state.joblib",
 }
 

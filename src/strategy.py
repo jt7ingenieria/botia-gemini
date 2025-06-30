@@ -14,7 +14,6 @@ from joblib import dump, load
 import os
 
 from src.indicators import DataProcessor # Importar DataProcessor
-from config import STRATEGY_CONFIG # Importar la configuración de estrategia
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -24,11 +23,13 @@ logger = logging.getLogger(__name__)
 # Módulo 2: Modelos de Pronóstico
 # =============================================================================
 class ARIMAModel:
-    def __init__(self, order=STRATEGY_CONFIG["ARIMA_ORDER"]):
-        self.order = order
+    def __init__(self, strategy_config=None):
+        self.strategy_config = strategy_config if strategy_config is not None else {}
+        self.order = self.strategy_config.get("ARIMA_ORDER", (1,1,1))
         self.model = None
     
-    def cross_validate(self, y, n_splits=STRATEGY_CONFIG["ARIMA_N_SPLITS"]):
+    def cross_validate(self, y, n_splits=None):
+        n_splits = n_splits if n_splits is not None else self.strategy_config.get("ARIMA_N_SPLITS", 5)
         """Validación cruzada temporal correcta."""
         best_model = None
         best_mse = float('inf')
@@ -52,16 +53,21 @@ class ARIMAModel:
         return self.model
 
 class GaussianProcessModel:
-    def __init__(self, kernel=None):
-        self.kernel = kernel or ConstantKernel(STRATEGY_CONFIG["GP_KERNEL_CONSTANT"]) * RBF(length_scale=STRATEGY_CONFIG["GP_KERNEL_RBF_LENGTH_SCALE"])
-        self.model = GaussianProcessRegressor(kernel=self.kernel, n_restarts_optimizer=STRATEGY_CONFIG["GP_N_RESTARTS_OPTIMIZER"])
+    def __init__(self, strategy_config=None):
+        self.strategy_config = strategy_config if strategy_config is not None else {}
+        kernel_constant = self.strategy_config.get("GP_KERNEL_CONSTANT", 1.0)
+        rbf_length_scale = self.strategy_config.get("GP_KERNEL_RBF_LENGTH_SCALE", 1.0)
+        n_restarts_optimizer = self.strategy_config.get("GP_N_RESTARTS_OPTIMIZER", 10)
+        self.kernel = ConstantKernel(kernel_constant) * RBF(length_scale=rbf_length_scale)
+        self.model = GaussianProcessRegressor(kernel=self.kernel, n_restarts_optimizer=n_restarts_optimizer)
     
     def fit(self, X, y):
         self.model.fit(X, y)
         return self
 
 class MonteCarloSimulator:
-    def __init__(self):
+    def __init__(self, strategy_config=None):
+        self.strategy_config = strategy_config if strategy_config is not None else {}
         self.params = {}
     
     def calibrate(self, returns):
@@ -80,7 +86,9 @@ class MonteCarloSimulator:
         }
         return self.params
 
-    def simulate(self, S0, steps=STRATEGY_CONFIG["MONTE_CARLO_STEPS"], n_simulations=STRATEGY_CONFIG["MONTE_CARLO_N_SIMULATIONS"]):
+    def simulate(self, S0, steps=None, n_simulations=None):
+        steps = steps if steps is not None else self.strategy_config.get("MONTE_CARLO_STEPS", 1)
+        n_simulations = n_simulations if n_simulations is not None else self.strategy_config.get("MONTE_CARLO_N_SIMULATIONS", 1000)
         """Simulación de saltos con parámetros calibrados."""
         results = []
         for _ in range(n_simulations):
@@ -103,21 +111,23 @@ class MonteCarloSimulator:
 # Módulo 3: Predictor Principal
 # =============================================================================
 class FinancialPredictor:
-    def __init__(self, model_path='financial_predictor.joblib'):
-        self.data_processor = DataProcessor()
+    def __init__(self, model_path='financial_predictor.joblib', strategy_config=None, indicators_config=None):
+        self.strategy_config = strategy_config if strategy_config is not None else {}
+        self.indicators_config = indicators_config if indicators_config is not None else {}
+        self.data_processor = DataProcessor(indicators_config=self.indicators_config)
         self.scaler = StandardScaler()
         self.model_path = model_path
         self.trained = False
         self.models = {
-            'arima': ARIMAModel(),
-            'gp': GaussianProcessModel(),
+            'arima': ARIMAModel(strategy_config=self.strategy_config),
+            'gp': GaussianProcessModel(strategy_config=self.strategy_config),
             'bayesian': BayesianRidge(),
-            'montecarlo': MonteCarloSimulator(),
+            'montecarlo': MonteCarloSimulator(strategy_config=self.strategy_config),
             'ensemble': GradientBoostingRegressor(
-                n_estimators=STRATEGY_CONFIG["GRADIENT_BOOSTING_N_ESTIMATORS"],
-                learning_rate=STRATEGY_CONFIG["GRADIENT_BOOSTING_LEARNING_RATE"],
-                max_depth=STRATEGY_CONFIG["GRADIENT_BOOSTING_MAX_DEPTH"],
-                random_state=STRATEGY_CONFIG["GRADIENT_BOOSTING_RANDOM_STATE"]
+                n_estimators=self.strategy_config.get("GRADIENT_BOOSTING_N_ESTIMATORS", 100),
+                learning_rate=self.strategy_config.get("GRADIENT_BOOSTING_LEARNING_RATE", 0.1),
+                max_depth=self.strategy_config.get("GRADIENT_BOOSTING_MAX_DEPTH", 3),
+                random_state=self.strategy_config.get("GRADIENT_BOOSTING_RANDOM_STATE", 42)
             )
         }
 
@@ -125,6 +135,7 @@ class FinancialPredictor:
         """Entrenamiento con pipeline modularizado."""
         # Preprocesamiento
         processed_df = self.data_processor.preprocess(df)
+        processed_df = processed_df.dropna() # Eliminar filas con NaN después del preprocesamiento
         X = processed_df.drop(columns=['close'])
         y = processed_df['close'].values
         
@@ -183,6 +194,12 @@ class FinancialPredictor:
             # Preprocesamiento incremental
             processed = self.data_processor.preprocess(current_data)
             latest = processed.iloc[[-1]].drop(columns=['close'])
+            latest = latest.dropna() # Eliminar NaN de la fila más reciente
+            
+            if latest.empty:
+                logger.warning("Latest data point is empty after dropping NaNs. Returning neutral prediction.")
+                return np.array([0.0]) # Devolver una predicción neutral si no hay datos válidos
+
             X_scaled = self.scaler.transform(latest)
             
             # Selección de método

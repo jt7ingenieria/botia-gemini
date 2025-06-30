@@ -3,26 +3,86 @@ import logging
 import numpy as np
 import matplotlib.pyplot as plt # Importar matplotlib
 
-from src.data_fetcher import generate_market_data # Importar la función de generación de datos
-from src.trading_system import LiveLearningTradingSystem # Importar la clase principal del sistema
-from src.utils import log_message
-from config import BOT_CONFIG # Importar la configuración del bot
+from .data_fetcher import generate_market_data # Importar la función de generación de datos
+from .trading_system import LiveLearningTradingSystem # Importar la clase principal del sistema
+from .utils import log_message
+from config import BOT_CONFIG, STRATEGY_CONFIG, INDICATORS_CONFIG, RISK_MANAGER_CONFIG # Importar todas las configuraciones
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def main():
+def main(config_override=None, run_optimization=False, optimization_phase='all'):
+    # Crear copias mutables de las configuraciones
+    bot_config = BOT_CONFIG.copy()
+    strategy_config = STRATEGY_CONFIG.copy()
+    indicators_config = INDICATORS_CONFIG.copy()
+    risk_manager_config = RISK_MANAGER_CONFIG.copy()
+
+    # Aplicar sobrescrituras si existen
+    if config_override:
+        bot_config.update(config_override.get("BOT_CONFIG", {}))
+        strategy_config.update(config_override.get("STRATEGY_CONFIG", {}))
+        indicators_config.update(config_override.get("INDICATORS_CONFIG", {}))
+        risk_manager_config.update(config_override.get("RISK_MANAGER_CONFIG", {}))
+
     log_message("Iniciando el bot de trading...")
 
     # Generar datos de mercado
-    market_data = generate_market_data(num_points=BOT_CONFIG["num_market_data_points"])
+    market_data = generate_market_data(num_points=bot_config["num_market_data_points"])
     
-    # Crear sistema de trading
-    trading_system = LiveLearningTradingSystem(commission_rate=BOT_CONFIG["commission_rate"])
+    if run_optimization:
+        from optimize_advanced import AdvancedOptimizer
+        logger.info(f"Running advanced optimization for phase: {optimization_phase}...")
+        
+        # Combine all configs into a single dictionary for the optimizer
+        full_initial_config = {
+            "BOT_CONFIG": bot_config,
+            "STRATEGY_CONFIG": strategy_config,
+            "INDICATORS_CONFIG": indicators_config,
+            "RISK_MANAGER_CONFIG": risk_manager_config,
+        }
+        
+        optimizer = AdvancedOptimizer(full_initial_config)
+        best_params = optimizer.optimize(market_data) # Pass market_data for regime detection
+        
+        if best_params:
+            logger.info(f"Optimization completed. Best parameters: {best_params}")
+            # Apply best parameters to the config_override for the actual backtest run
+            for key, value in best_params.items():
+                if key.startswith('bot__'):
+                    bot_config[key.replace('bot__', '')] = value
+                elif key.startswith('strategy__'):
+                    # Special handling for ARIMA_ORDER tuple
+                    if key == 'strategy__arima_p':
+                        current_arima_order = strategy_config.get("ARIMA_ORDER", (0,0,0))
+                        strategy_config["ARIMA_ORDER"] = (value, current_arima_order[1], current_arima_order[2])
+                    elif key == 'strategy__arima_d':
+                        current_arima_order = strategy_config.get("ARIMA_ORDER", (0,0,0))
+                        strategy_config["ARIMA_ORDER"] = (current_arima_order[0], value, current_arima_order[2])
+                    elif key == 'strategy__arima_q':
+                        current_arima_order = strategy_config.get("ARIMA_ORDER", (0,0,0))
+                        strategy_config["ARIMA_ORDER"] = (current_arima_order[0], current_arima_order[1], value)
+                    else:
+                        strategy_config[key.replace('strategy__', '')] = value
+                elif key.startswith('indicators__'):
+                    indicators_config[key.replace('indicators__', '')] = value
+                elif key.startswith('risk_manager__'):
+                    risk_manager_config[key.replace('risk_manager__', '')] = value
+        else:
+            logger.warning("Optimization did not return best parameters. Running backtest with default/initial configs.")
+
+    # Crear sistema de trading, pasando todas las configuraciones
+    trading_system = LiveLearningTradingSystem(
+        commission_rate=bot_config["commission_rate"],
+        initial_balance=bot_config["initial_balance"], # Ensure initial_balance is passed
+        strategy_config=strategy_config,
+        indicators_config=indicators_config,
+        risk_manager_config=risk_manager_config
+    )
     
     # Ejecutar backtesting
-    results = trading_system.run_backtest(market_data, BOT_CONFIG["trading_system_state_file"])
+    results = trading_system.run_backtest(market_data, bot_config["trading_system_state_file"])
     
     # Mostrar resultados
     print("\n" + "="*60)
@@ -66,6 +126,20 @@ def main():
         plt.show()
     
     log_message("Bot de trading finalizado.")
+    return results # Devolver los resultados del backtesting
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Run the trading bot or its optimization.')
+    parser.add_argument('--optimize', action='store_true', 
+                        help='Run hyperparameter optimization before backtesting.')
+    parser.add_argument('--phase', type=str, default='all', 
+                        choices=['bot', 'strategy', 'indicators', 'risk_manager', 'all'],
+                        help='Optimization phase to run (bot, strategy, indicators, risk_manager, all). Only applicable with --optimize.')
+    args = parser.parse_args()
+
+    if args.optimize:
+        main(run_optimization=True, optimization_phase=args.phase)
+    else:
+        main()

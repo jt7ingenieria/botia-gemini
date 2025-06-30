@@ -4,11 +4,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
 import logging
-from sklearn.ensemble import GradientBoostingRegressor
-from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
 from src.indicators import DataProcessor
+from src.strategy import FinancialPredictor # Importar FinancialPredictor
+from src.risk_management import RiskManager # Importar RiskManager
 import joblib
 import os
 
@@ -19,14 +18,14 @@ logger = logging.getLogger('LiveLearningTradingSystem')
 class LiveLearningTradingSystem:
     """Sistema de trading con aprendizaje continuo en tiempo real"""
     
-    def __init__(self, initial_balance=10000, max_drawdown=0.10, commission_rate=0.001, data_processor=None):
-        # ... (el resto del constructor se mantiene igual)
-        self.data_processor = data_processor if data_processor else DataProcessor()
+    def __init__(self, initial_balance=10000, max_drawdown=0.10, commission_rate=0.001, 
+                 strategy_config=None, indicators_config=None, risk_manager_config=None):
+        
         # Configuración financiera
         self.initial_balance = initial_balance
         self.current_balance = initial_balance
         self.max_drawdown = max_drawdown
-        self.commission_rate = 0.0001
+        self.commission_rate = commission_rate # Usar el valor pasado, no el fijo
         self.max_balance = initial_balance
         self.equity_curve = [initial_balance]
         
@@ -45,9 +44,14 @@ class LiveLearningTradingSystem:
         self.learning_log = []
         
         # Modelos
-        self.predictor = self._build_initial_predictor()
-        self.risk_model = self._build_risk_model()
-        self.scaler = StandardScaler()
+        self.indicators_config = indicators_config if indicators_config is not None else {}
+        self.strategy_config = strategy_config if strategy_config is not None else {}
+        self.risk_manager_config = risk_manager_config if risk_manager_config is not None else {}
+
+        self.data_processor = DataProcessor(indicators_config=self.indicators_config)
+        self.predictor = FinancialPredictor(strategy_config=self.strategy_config, indicators_config=self.indicators_config)
+        self.risk_model = RiskManager(risk_manager_config=self.risk_manager_config)
+        self.scaler = StandardScaler() # Scaler para las entradas del modelo predictivo
         self.data_buffer = pd.DataFrame()
         
         # Configuración de aprendizaje
@@ -56,176 +60,59 @@ class LiveLearningTradingSystem:
         self.warmup_period = 200  # Período inicial de calentamiento
         self.lookback_window = 365  # Ventana de datos para reentrenamiento
         
-    def _build_initial_predictor(self):
-        """Construye el modelo predictivo inicial"""
-        return GradientBoostingRegressor(
-            n_estimators=100,
-            learning_rate=0.1,
-            max_depth=3,
-            random_state=42
-        )
-    
-    def _build_risk_model(self):
-        """Construye el modelo de gestión de riesgo"""
-        return MLPRegressor(
-            hidden_layer_sizes=(32, 16),
-            activation='relu',
-            solver='adam',
-            max_iter=1000,
-            random_state=42,
-            warm_start=True
-        )
-    
-    
-    
     def train_predictor(self, data):
         """Entrena el modelo predictivo con datos históricos"""
-        # Preprocesar datos
-        processed_data = self.data_processor.preprocess(data.copy())
-        
-        # Preparar características y objetivo
-        X = processed_data[['volatility_5', 'volatility_20', 'atr', 'return']].shift(1).dropna()
-        y = processed_data['return'].iloc[1:len(X)+1]
-        
-        # Verificar que tenemos suficientes datos
-        if len(X) < 100 or len(y) < 100:
-            logger.warning("Datos insuficientes para entrenar el modelo predictivo")
-            return False
-        
-        # Escalar características
-        X_scaled = self.scaler.fit_transform(X)
-        
-        # Entrenar modelo
-        self.predictor.fit(X_scaled, y)
+        # El FinancialPredictor ya tiene su propio método train
+        self.predictor.train(data, save_model=False) # No guardar el modelo en cada reentrenamiento
         
         # Actualizar versión del modelo
         self.model_version += 1
         self.learning_log.append({
             'period': len(self.data_buffer),
             'model_version': self.model_version,
-            'window_size': len(X)
+            'window_size': len(data) # Usar el tamaño de los datos de entrenamiento
         })
         
-        logger.info(f"Modelo predictivo reentrenado (versión {self.model_version}) con {len(X)} muestras")
+        logger.info(f"Modelo predictivo reentrenado (versión {self.model_version}) con {len(data)} muestras")
         return True
     
     def train_risk_model(self):
         """Entrena el modelo de gestión de riesgo con datos de operaciones"""
-        if len(self.trade_history) < 20:
-            return False
-        
-        # Preparar datos de entrenamiento
-        X = []
-        y = []
-        
-        for trade in self.trade_history:
-            if 'features' in trade and 'actual_position_size' in trade:
-                X.append(trade['features'])
-                # Objetivo: ratio entre tamaño de posición real y tamaño sugerido por Kelly
-                if trade['kelly_size'] != 0:
-                    y.append(trade['actual_position_size'] / trade['kelly_size'])
-                else:
-                    # Si kelly_size es 0, esta operación no es útil para entrenar el modelo de riesgo
-                    continue
-        
-        if not X or not y:
-            logger.warning("Datos insuficientes o inválidos para entrenar el modelo de riesgo.")
-            return False
-
-        if len(X) < 10:
-            logger.warning(f"Se requieren al menos 10 muestras para entrenar el modelo de riesgo, pero se encontraron {len(X)}.")
-            return False
-        
-        # Entrenar modelo
-        self.risk_model.fit(X, y)
-        logger.info(f"Modelo de riesgo reentrenado con {len(X)} muestras")
-        return True
+        # El RiskManager ya tiene su propio método train_risk_model
+        return self.risk_model.train_risk_model(self.trade_history)
     
     def predict_direction(self, current_data):
         """Predice la dirección del mercado usando el modelo actual"""
-        # Crear características para predicción
-        features = pd.DataFrame({
-            'volatility_5': [current_data['volatility_5']],
-            'volatility_20': [current_data['volatility_20']],
-            'atr': [current_data['atr']],
-            'return': [current_data['return']]
-        })
+        # El FinancialPredictor ya tiene su propio método predict
+        # Necesitamos pasarle el DataFrame completo para que pueda preprocesar
+        # y extraer las características necesarias para la predicción.
+        # current_data es una Serie, necesitamos convertirla a DataFrame para que funcione con preprocess
+        current_data_df = current_data.to_frame().T # Convertir Serie a DataFrame de 1 fila
         
-        # Escalar características
-        features_scaled = self.scaler.transform(features)
+        # Asumiendo que el predictor predice el precio de cierre futuro
+        predicted_price = self.predictor.predict(current_data_df, steps=1, method='ensemble')[0]
         
-        # Predecir return
-        predicted_return = self.predictor.predict(features_scaled)[0]
-        
-        # Determinar dirección
-        if predicted_return > 0.005:  # Umbral para entrada alcista
+        # Determinar dirección basándose en la predicción vs el precio actual
+        # Esto es una simplificación, una estrategia real usaría más lógica
+        if predicted_price > current_data['close'] * 1.005:  # Umbral para entrada alcista (ej. 0.5% de subida)
             return 1
-        elif predicted_return < -0.005:  # Umbral para entrada bajista
+        elif predicted_price < current_data['close'] * 0.995:  # Umbral para entrada bajista (ej. 0.5% de bajada)
             return -1
         return 0
     
     def calculate_position_size(self):
         """Calcula el tamaño de posición usando Kelly fraccionado y red neuronal"""
-        # Obtener métricas recientes
-        recent_trades = self.trade_history[-20:] if len(self.trade_history) > 20 else self.trade_history
-        win_rate = 0.5
-        avg_win = 1.0
-        avg_loss = 1.0
-        
-        if recent_trades:
-            wins = [t for t in recent_trades if t.get('pl', 0) > 0]
-            losses = [t for t in recent_trades if t.get('pl', 0) <= 0]
-            
-            if wins and losses:
-                win_rate = len(wins) / len(recent_trades)
-                avg_win = np.mean([t['pl'] for t in wins])
-                avg_loss = np.abs(np.mean([t['pl'] for t in losses]))
-        
-        # Cálculo de Kelly
-        if avg_loss == 0:
-            kelly_fraction = 0.0
-        else:
-            win_ratio = avg_win / avg_loss
-            kelly_fraction = (win_rate - (1 - win_rate) / win_ratio) if win_ratio > 0 else 0.0
-        
-        # Aplicar fracción conservadora
-        kelly_fraction = max(0.01, min(kelly_fraction * 0.5, 0.2))  # Asegurar un mínimo de 0.01
-        
-        # Entradas para la red neuronal
-        nn_inputs = [
-            win_rate,
-            self.losing_streak / 10.0,
-            self.current_balance / self.max_balance,
-            self.volatility * 100,
-            self.atr / self.current_balance * 100
-        ]
-        
-        # Factor de ajuste de la red neuronal (0.5-1.5)
-        # Si el modelo de riesgo no está entrenado, usar un factor por defecto
-        if hasattr(self.risk_model, 'coefs_') and self.risk_model.coefs_ is not None:
-            nn_factor = self.risk_model.predict([nn_inputs])[0]
-            nn_factor = max(0.5, min(nn_factor, 1.5))
-        else:
-            nn_factor = 1.0 # Usar un factor por defecto si el modelo no está entrenado
-        
-        # Tamaño final de posición
-        position_size = kelly_fraction * nn_factor
-        
-        # Asegurar que no se exceda el drawdown máximo y que haya un tamaño mínimo
-        # Simplificar max_allowed a un porcentaje fijo del balance para evitar valores extremos
-        max_allowed_percentage = 0.05 # Por ejemplo, máximo 5% del balance
-        max_allowed_by_balance = self.current_balance * max_allowed_percentage / self.current_balance # Esto es solo max_allowed_percentage
-        
-        position_size = max(0.001, min(position_size, max_allowed_by_balance)) # Asegurar un mínimo de 0.001 y un máximo del 5%
-        
-        # Guardar características para entrenamiento futuro
-        trade_features = {
-            'features': nn_inputs,
-            'kelly_size': kelly_fraction,
-            'actual_position_size': position_size
-        }
-        
-        return position_size, trade_features
+        # El RiskManager ya tiene su propio método calculate_position_size
+        return self.risk_model.calculate_position_size(
+            self.trade_history,
+            self.current_balance,
+            self.max_balance,
+            self.atr,
+            self.volatility,
+            self.losing_streak,
+            self.max_drawdown,
+            self.commission_rate
+        )
     
     def run_backtest(self, data, save_path="trading_system_state.joblib"):
         """Ejecuta el backtesting con aprendizaje continuo"""
@@ -234,7 +121,8 @@ class LiveLearningTradingSystem:
         self.data_buffer = data.iloc[:self.warmup_period].copy()
         
         # Entrenamiento inicial
-        self.train_predictor(self.data_buffer)
+        # Asegurarse de que el predictor se entrena con un DataFrame, no una Serie
+        self.predictor.train(self.data_buffer, save_model=False)
         
         # Bucle principal
         for i in tqdm(range(self.warmup_period, len(data)), desc="Backtesting con aprendizaje"):
@@ -243,11 +131,27 @@ class LiveLearningTradingSystem:
             self.data_buffer = pd.concat([self.data_buffer, new_data], ignore_index=True)
             
             # Preprocesar datos actuales
-            current_data = self.data_processor.preprocess(self.data_buffer).iloc[-1]
+            # Asegurarse de que el data_processor.preprocess recibe un DataFrame con suficiente historial
+            # para calcular los indicadores.
+            # Usamos una ventana de datos para el preprocesamiento, y luego tomamos la última fila válida.
+            processed_window_df = self.data_processor.preprocess(self.data_buffer.iloc[-self.lookback_window:].copy())
+            processed_window_df = processed_window_df.dropna() # Eliminar cualquier NaN residual de los indicadores
             
+            if processed_window_df.empty:
+                logger.warning(f"No valid data after preprocessing at period {i}. Skipping trade decision.")
+                self.equity_curve.append(self.current_balance) # Keep equity curve consistent
+                continue # Skip this iteration if no valid data
+
+            current_data = processed_window_df.iloc[-1] # Obtener la Serie del último punto válido
+            
+            # Actualizar ATR y Volatilidad para calculate_position_size
+            self.atr = current_data['atr'] if 'atr' in current_data else 0.0
+            self.volatility = current_data['volatility_20'] if 'volatility_20' in current_data else 0.0
+
             # Verificar drawdown máximo
             if self._check_drawdown():
                 logger.warning(f"Drawdown máximo alcanzado en el período {i}. Deteniendo backtest.")
+                return self._calculate_performance_metrics() # Devolver métricas actuales
                 break
             
             # Reentrenamiento periódico
@@ -257,10 +161,10 @@ class LiveLearningTradingSystem:
                 
                 # Reentrenar modelo predictivo
                 train_data = self.data_buffer.iloc[-self.lookback_window:] if len(self.data_buffer) > self.lookback_window else self.data_buffer
-                self.train_predictor(train_data)
+                self.predictor.train(train_data, save_model=False)
                 
                 # Reentrenar modelo de riesgo
-                self.train_risk_model()
+                self.risk_model.train_risk_model(self.trade_history)
             
             # Predecir dirección del mercado
             direction = self.predict_direction(current_data)
@@ -320,31 +224,59 @@ class LiveLearningTradingSystem:
                     close_trade = True
                     close_reason = "trailing_stop"
             
-            # Cerrar operación si es necesario
-            if close_trade:
+            # Cerrar operación principal si es necesario (a menos que la cobertura la cierre)
+            # La lógica de cierre de la operación principal por cobertura se maneja en la sección de cobertura
+            if close_trade and not self.hedge_trade:
                 self._close_trade(current_price, close_reason)
-        
+            
         # Operación de cobertura
         if self.hedge_trade:
             hedge = self.hedge_trade
             direction = hedge['direction']
             
-            # Verificar condiciones de cierre
-            close_hedge = False
-            
-            # TP
+            close_hedge_by_tp = False
+            close_hedge_by_sl = False
+
+            # Verificar si el TP de la cobertura se activa
             if ((direction > 0 and current_price >= hedge['tp']) or
                 (direction < 0 and current_price <= hedge['tp'])):
-                close_hedge = True
+                close_hedge_by_tp = True
             
-            # SL
+            # Verificar si el SL de la cobertura se activa
             if ((direction > 0 and current_price <= hedge['sl']) or
                 (direction < 0 and current_price >= hedge['sl'])):
-                close_hedge = True
-            
-            # Cerrar cobertura
-            if close_hedge:
-                self._close_hedge_trade(current_price)
+                close_hedge_by_sl = True
+
+            if close_hedge_by_tp or close_hedge_by_sl:
+                # Calcular P&L de la cobertura si se cierra ahora
+                if direction > 0:
+                    hedge_pl = (current_price - hedge['entry_price']) * (hedge['size'] / hedge['entry_price'])
+                else:
+                    hedge_pl = (hedge['entry_price'] - current_price) * (hedge['size'] / hedge['entry_price'])
+
+                # Calcular P&L no realizado de la operación principal
+                main_trade_unrealized_pl = 0
+                if self.active_trade: # Asegurarse de que la operación principal aún esté activa
+                    main_direction = self.active_trade['direction']
+                    main_entry_price = self.active_trade['entry_price']
+                    main_size = self.active_trade['size']
+                    if main_direction > 0:
+                        main_trade_unrealized_pl = (current_price - main_entry_price) * (main_size / main_entry_price)
+                    else:
+                        main_trade_unrealized_pl = (main_entry_price - current_price) * (main_size / main_entry_price)
+                
+                combined_pl = hedge_pl + main_trade_unrealized_pl
+
+                # Si el TP de la cobertura se activa Y el P&L combinado cumple el objetivo
+                if close_hedge_by_tp and combined_pl >= hedge['target_profit_from_hedge']:
+                    logger.info(f"Objetivo de ganancia combinado alcanzado. Cerrando operación principal y de cobertura.")
+                    if self.active_trade: # Asegurarse de que la operación principal aún esté activa
+                        self._close_trade(current_price, "hedge_profit_target") # Cerrar operación principal
+                    self._close_hedge_trade(current_price) # Cerrar operación de cobertura
+                elif close_hedge_by_sl: # Si el SL de la cobertura se activa, cerrar solo la cobertura
+                    logger.info(f"SL de cobertura alcanzado. Cerrando operación de cobertura.")
+                    self._close_hedge_trade(current_price)
+                # Si el TP de la cobertura se activa pero el P&L combinado no cumple el objetivo, la cobertura permanece abierta
     
     def _open_trade(self, current_data, direction, index):
         """Abre una nueva operación principal"""
@@ -392,32 +324,66 @@ class LiveLearningTradingSystem:
     def _open_hedge_trade(self, current_data, direction, index):
         """Abre una operación de cobertura"""
         current_price = current_data['close']
+
+        # Calcular pérdida potencial de la operación principal si alcanza su SL
+        main_trade = self.active_trade
+        if main_trade['direction'] > 0:  # Operación principal es larga
+            potential_main_loss = (main_trade['entry_price'] - main_trade['sl']) * (main_trade['size'] / main_trade['entry_price'])
+        else:  # Operación principal es corta
+            potential_main_loss = (main_trade['sl'] - main_trade['entry_price']) * (main_trade['size'] / main_trade['entry_price'])
+
+        # Asegurar que la pérdida potencial sea un valor positivo
+        potential_main_loss = abs(potential_main_loss)
+
+        # Beneficio objetivo de la cobertura: cubrir pérdida principal + 1% del balance inicial
+        target_profit_from_hedge = potential_main_loss + (self.initial_balance * 0.01)
+
+        # Tamaño de la operación de cobertura: igual al tamaño de la operación principal
+        # Esto simplifica el cálculo del TP, asumiendo que el valor nominal es el mismo.
+        hedge_value = main_trade['size']
+
+        # Calcular el cambio de precio necesario para que la cobertura alcance el beneficio objetivo
+        # P&L = (exit_price - entry_price) * (size / entry_price) para largo
+        # P&L = (entry_price - exit_price) * (size / entry_price) para corto
+        # Despejando (exit_price - entry_price) = P&L * (entry_price / size)
+        # Para la cobertura, el 'entry_price' es current_price y 'size' es hedge_value
+        # Entonces, (exit_price - current_price) = target_profit_from_hedge * (current_price / hedge_value)
         
-        # Tamaño de cobertura (50% de la posición principal)
-        hedge_size = min(self.active_trade['size'] * 0.5, self.current_balance * 0.1)
-        
-        # Calcular SL y TP para cobertura (más agresivos)
+        # Asegurarse de que hedge_value no sea cero para evitar división por cero
+        if hedge_value == 0:
+            logger.warning("Hedge value is zero, cannot open hedge trade.")
+            return
+
+        required_price_change = target_profit_from_hedge * (current_price / hedge_value)
+
+        # Calcular TP para la cobertura
+        if direction > 0:  # Cobertura es larga
+            tp = current_price + required_price_change
+        else:  # Cobertura es corta
+            tp = current_price - required_price_change
+
+        # SL para la cobertura (más agresivo, por ejemplo, 1 ATR)
         if direction > 0:
-            sl = current_price - 3 * self.atr
-            tp = current_price + 1.5 * self.atr
+            sl = current_price - 1 * self.atr
         else:
-            sl = current_price + 3 * self.atr
-            tp = current_price - 1.5 * self.atr
-        
+            sl = current_price + 1 * self.atr
+
         # Comisión
-        commission = hedge_size * self.commission_rate
-        
+        commission = hedge_value * self.commission_rate
+
         # Crear operación de cobertura
         self.hedge_trade = {
             'entry_index': index,
             'entry_price': current_price,
             'direction': direction,
-            'size': hedge_size,
+            'size': hedge_value,
             'sl': sl,
             'tp': tp,
-            'commission': commission
+            'commission': commission,
+            'main_trade_potential_loss': potential_main_loss, # Para depuración/análisis
+            'target_profit_from_hedge': target_profit_from_hedge # Para depuración/análisis
         }
-        
+
         # Actualizar balance
         self.current_balance -= commission
     
