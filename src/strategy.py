@@ -14,6 +14,7 @@ from joblib import dump, load
 import os
 
 from src.indicators import DataProcessor # Importar DataProcessor
+from config import STRATEGY_CONFIG # Importar la configuración de estrategia
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -23,11 +24,11 @@ logger = logging.getLogger(__name__)
 # Módulo 2: Modelos de Pronóstico
 # =============================================================================
 class ARIMAModel:
-    def __init__(self, order=(1,1,1)):
+    def __init__(self, order=STRATEGY_CONFIG["ARIMA_ORDER"]):
         self.order = order
         self.model = None
     
-    def cross_validate(self, y, n_splits=5):
+    def cross_validate(self, y, n_splits=STRATEGY_CONFIG["ARIMA_N_SPLITS"]):
         """Validación cruzada temporal correcta."""
         best_model = None
         best_mse = float('inf')
@@ -52,8 +53,8 @@ class ARIMAModel:
 
 class GaussianProcessModel:
     def __init__(self, kernel=None):
-        self.kernel = kernel or ConstantKernel(1.0) * RBF(length_scale=1.0)
-        self.model = GaussianProcessRegressor(kernel=self.kernel, n_restarts_optimizer=10)
+        self.kernel = kernel or ConstantKernel(STRATEGY_CONFIG["GP_KERNEL_CONSTANT"]) * RBF(length_scale=STRATEGY_CONFIG["GP_KERNEL_RBF_LENGTH_SCALE"])
+        self.model = GaussianProcessRegressor(kernel=self.kernel, n_restarts_optimizer=STRATEGY_CONFIG["GP_N_RESTARTS_OPTIMIZER"])
     
     def fit(self, X, y):
         self.model.fit(X, y)
@@ -79,7 +80,7 @@ class MonteCarloSimulator:
         }
         return self.params
 
-    def simulate(self, S0, steps=1, n_simulations=1000):
+    def simulate(self, S0, steps=STRATEGY_CONFIG["MONTE_CARLO_STEPS"], n_simulations=STRATEGY_CONFIG["MONTE_CARLO_N_SIMULATIONS"]):
         """Simulación de saltos con parámetros calibrados."""
         results = []
         for _ in range(n_simulations):
@@ -108,12 +109,15 @@ class FinancialPredictor:
         self.model_path = model_path
         self.trained = False
         self.models = {
-            'arima': ARIMAModel(order=(1,1,1)),
+            'arima': ARIMAModel(),
             'gp': GaussianProcessModel(),
             'bayesian': BayesianRidge(),
             'montecarlo': MonteCarloSimulator(),
             'ensemble': GradientBoostingRegressor(
-                n_estimators=100, learning_rate=0.1, max_depth=3, random_state=42
+                n_estimators=STRATEGY_CONFIG["GRADIENT_BOOSTING_N_ESTIMATORS"],
+                learning_rate=STRATEGY_CONFIG["GRADIENT_BOOSTING_LEARNING_RATE"],
+                max_depth=STRATEGY_CONFIG["GRADIENT_BOOSTING_MAX_DEPTH"],
+                random_state=STRATEGY_CONFIG["GRADIENT_BOOSTING_RANDOM_STATE"]
             )
         }
 

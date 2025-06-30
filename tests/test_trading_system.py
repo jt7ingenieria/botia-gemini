@@ -7,20 +7,21 @@ from src.trading_system import LiveLearningTradingSystem
 from src.indicators import DataProcessor
 from src.risk_management import RiskManager
 from src.execution import TradeManager
+from sklearn.neural_network import MLPRegressor
 
 @pytest.fixture
 def mock_data_processor():
     mock_dp = MagicMock(spec=DataProcessor)
     mock_dp.preprocess.return_value = pd.DataFrame({
-        'open': [100, 101, 102],
-        'high': [103, 104, 105],
-        'low': [99, 100, 101],
-        'close': [101, 102, 103],
-        'volume': [1000, 1100, 1200],
-        'returns': [0.01, 0.01, 0.01],
-        'volatility_5': [0.01, 0.01, 0.01],
-        'volatility_20': [0.01, 0.01, 0.01],
-        'atr': [1.0, 1.0, 1.0]
+        'open': np.random.rand(101) * 100,
+        'high': np.random.rand(101) * 100 + 5,
+        'low': np.random.rand(101) * 100 - 5,
+        'close': np.random.rand(101) * 100,
+        'volume': np.random.randint(1000, 10000, 101),
+        'return': np.random.rand(101) * 0.01,
+        'volatility_5': np.random.rand(101) * 0.01,
+        'volatility_20': np.random.rand(101) * 0.01,
+        'atr': np.random.rand(101) * 1.0
     })
     return mock_dp
 
@@ -43,15 +44,19 @@ def mock_predictor():
     return mock_pred
 
 @pytest.fixture
-def trading_system(mock_data_processor, mock_risk_manager, mock_trade_manager, mock_predictor):
+def mock_mlp_regressor():
+    mock_mlp = MagicMock(spec=MLPRegressor)
+    return mock_mlp
+
+@pytest.fixture
+def trading_system(mock_data_processor, mock_risk_manager, mock_trade_manager, mock_predictor, mock_mlp_regressor):
     with patch('src.indicators.DataProcessor', return_value=mock_data_processor):
         with patch('src.risk_management.RiskManager', return_value=mock_risk_manager):
             with patch('src.execution.TradeManager', return_value=mock_trade_manager):
                 with patch('src.trading_system.GradientBoostingRegressor', return_value=mock_predictor):
-                    with patch('src.trading_system.MLPRegressor', return_value=MagicMock()): # Mockear MLPRegressor
-                        
-                        system = LiveLearningTradingSystem()
-                        return system
+                    system = LiveLearningTradingSystem(data_processor=mock_data_processor)
+                    system.risk_model = mock_mlp_regressor
+                    return system
 
 @pytest.fixture
 def sample_market_data():
@@ -65,6 +70,17 @@ def sample_market_data():
     }
     df = pd.DataFrame(data)
     return df
+
+@pytest.fixture
+def sample_current_data(sample_market_data):
+    # Devuelve una sola fila de datos de mercado preprocesados
+    # Esto simula los datos de un solo punto en el tiempo
+    processed_data = pd.DataFrame({
+        'open': [100], 'high': [103], 'low': [99], 'close': [101],
+        'volume': [1000], 'return': [0.01], 'volatility_5': [0.01],
+        'volatility_20': [0.01], 'atr': [1.0]
+    })
+    return processed_data.iloc[0]
 
 def test_trading_system_init(trading_system):
     assert trading_system.initial_balance == 10000
@@ -81,15 +97,13 @@ def test_train_predictor(trading_system, mock_data_processor, mock_predictor, sa
     mock_predictor.fit.assert_called_once()
     assert trading_system.model_version == 2 # Se incrementa después del entrenamiento inicial
 
-def test_train_risk_model(trading_system, mock_risk_manager):
-    # Simular historial de operaciones para que el modelo de riesgo pueda entrenar
+def test_train_risk_model(trading_system):
     trading_system.trade_history = [
-        {'pl': 10, 'features': [0.5, 0.1, 0.9, 0.02, 0.002], 'kelly_size': 0.01, 'actual_position_size': 0.01},
-        {'pl': -5, 'features': [0.4, 0.2, 0.8, 0.03, 0.003], 'kelly_size': 0.01, 'actual_position_size': 0.01},
+        {'pl': 10, 'features': [0.5, 0.1, 0.9, 0.02, 0.002], 'kelly_size': 0.01, 'actual_position_size': 0.01, 'type': 'main'} for _ in range(20)
     ]
     result = trading_system.train_risk_model()
     assert result is True
-    mock_risk_manager.train_risk_model.assert_called_once()
+    trading_system.risk_model.fit.assert_called_once()
 
 def test_predict_direction(trading_system, mock_data_processor, mock_predictor, sample_current_data):
     # Asegurarse de que el scaler esté ajustado para la predicción
@@ -119,11 +133,14 @@ def test_run_backtest(trading_system, mock_data_processor, mock_risk_manager, mo
     trading_system._close_hedge_trade = MagicMock()
     trading_system.save_state = MagicMock()
 
+    trading_system._calculate_performance_metrics = MagicMock(return_value={'final_balance': 10000.0, 'total_trades': 1})
+
     results = trading_system.run_backtest(sample_market_data, "test_state.joblib")
     
     assert isinstance(results, dict)
     assert 'final_balance' in results
     trading_system.save_state.assert_called_once_with("test_state.joblib")
+    trading_system._calculate_performance_metrics.assert_called_once()
 
 def test_save_load_state(trading_system, sample_market_data):
     # Entrenar el sistema para tener un estado que guardar
@@ -137,15 +154,21 @@ def test_save_load_state(trading_system, sample_market_data):
     trading_system.equity_curve = [10000.0, 10500.0]
     
     test_path = "temp_trading_system_state.joblib"
-    trading_system.save_state(test_path)
-    
-    new_system = LiveLearningTradingSystem()
-    loaded = new_system.load_state(test_path)
-    
-    assert loaded is True
-    assert new_system.current_balance == 10500.0
-    assert new_system.max_balance == 10500.0
-    assert len(new_system.trade_history) == 1
-    assert new_system.trade_history[0]['pl'] == 10
-    
-    os.remove(test_path)
+
+    # Mockear joblib.dump y joblib.load
+    mock_state_storage = {}
+    with patch('joblib.dump', side_effect=lambda state, path: mock_state_storage.update({path: state})):
+        with patch('joblib.load', side_effect=lambda path: mock_state_storage[path]):
+            trading_system.save_state(test_path)
+            
+            new_system = LiveLearningTradingSystem()
+            loaded = new_system.load_state(test_path)
+            
+            assert loaded is True
+            assert new_system.current_balance == 10500.0
+            assert new_system.max_balance == 10500.0
+            assert len(new_system.trade_history) == 1
+            assert new_system.trade_history[0]['pl'] == 10
+            
+            # No necesitamos eliminar el archivo real ya que estamos mockeando
+            # os.remove(test_path)

@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import logging
+from config import INDICATORS_CONFIG # Importar la configuración de indicadores
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -28,16 +29,15 @@ class DataProcessor:
         return ha_df
 
     @staticmethod
-    def add_technical_features(df, window=14):
+    def add_technical_features(df, window=INDICATORS_CONFIG["RSI_WINDOW"]):
         """Añade indicadores técnicos con manejo de edge cases."""
         df = df.copy()
         # Retornos logarítmicos
         df['returns'] = np.log(df['close'] / df['close'].shift(1))
         
         # Volatilidad
-        df['volatility_5'] = df['returns'].rolling(5).std()
-        df['volatility_10'] = df['returns'].rolling(10).std()
-        df['volatility_20'] = df['returns'].rolling(20).std() # Añadido
+        for vol_window in INDICATORS_CONFIG["VOLATILITY_WINDOWS"]:
+            df[f'volatility_{vol_window}'] = df['returns'].rolling(vol_window).std()
         
         # RSI con manejo de división por cero
         delta = df['close'].diff()
@@ -52,19 +52,19 @@ class DataProcessor:
         df['rsi'] = 100 - (100 / (1 + rs))
         
         # MACD
-        df['ema12'] = df['close'].ewm(span=12, adjust=False).mean()
-        df['ema26'] = df['close'].ewm(span=26, adjust=False).mean()
-        df['macd'] = df['ema12'] - df['ema26']
-        df['signal'] = df['macd'].ewm(span=9, adjust=False).mean()
+        df['ema_fast'] = df['close'].ewm(span=INDICATORS_CONFIG["MACD_EMA_FAST_SPAN"], adjust=False).mean()
+        df['ema_slow'] = df['close'].ewm(span=INDICATORS_CONFIG["MACD_EMA_SLOW_SPAN"], adjust=False).mean()
+        df['macd'] = df['ema_fast'] - df['ema_slow']
+        df['signal'] = df['macd'].ewm(span=INDICATORS_CONFIG["MACD_SIGNAL_SPAN"], adjust=False).mean()
 
-        # ATR (Average True Range) - Añadido
+        # ATR (Average True Range)
         high_low = df['high'] - df['low']
         high_close = np.abs(df['high'] - df['close'].shift())
         low_close = np.abs(df['low'] - df['close'].shift())
         df['tr'] = np.max(np.array([high_low, high_close, low_close]).T, axis=1)
-        df['atr'] = df['tr'].rolling(window).mean()
+        df['atr'] = df['tr'].rolling(INDICATORS_CONFIG["ATR_WINDOW"]).mean()
         
-        return df.dropna()
+        return df
 
     def preprocess(self, df):
         """Pipeline completo de preprocesamiento."""

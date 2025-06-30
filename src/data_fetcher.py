@@ -193,15 +193,13 @@ def fetch_historical_data(symbol: str, interval: str, start_date: str, end_date:
             return pd.DataFrame() # Devolver un DataFrame vacío en caso de error
 
 # Función para simular datos financieros
-def generate_market_data(num_points=2000, volatility=0.02, trend=0.0001):
+def generate_market_data(num_points=2000, volatility=0.05, trend=0.0001):
     """Genera datos de mercado sintéticos con tendencia y volatilidad"""
     prices = [100]
     for i in range(1, num_points):
-        # Movimiento base + tendencia + volatilidad
         change = trend + volatility * np.random.randn()
         prices.append(prices[-1] * (1 + change))
     
-    # Crear DataFrame con OHLC
     df = pd.DataFrame({
         'open': prices,
         'high': [p + abs(np.random.normal(0, 1)) for p in prices],
@@ -209,4 +207,21 @@ def generate_market_data(num_points=2000, volatility=0.02, trend=0.0001):
         'close': prices,
         'volume': np.random.randint(1000, 10000, num_points)
     })
+    
+    # Calcular returns
+    df['return'] = df['close'].pct_change()
+    
+    # Calcular volatilidad
+    df['volatility_5'] = df['return'].rolling(5).std()
+    df['volatility_20'] = df['return'].rolling(20).std()
+    
+    # Calcular ATR
+    high_low = df['high'] - df['low']
+    high_close = np.abs(df['high'] - df['close'].shift())
+    low_close = np.abs(df['low'] - df['close'].shift())
+    df['tr'] = np.max(np.array([high_low, high_close, low_close]).T, axis=1)
+    df['atr'] = df['tr'].rolling(14).mean()
+    
+    df = df.dropna()
+    
     return df

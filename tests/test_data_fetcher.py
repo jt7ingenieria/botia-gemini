@@ -174,30 +174,28 @@ def test_fetch_historical_data_from_cache(db_session, redis_mock, prometheus_met
     mock_histogram.labels.assert_called_once_with(symbol=symbol, interval=interval)
     mock_histogram.labels.return_value.time.assert_called_once()
 
-def test_fetch_historical_data_error_notification(db_session, prometheus_metrics_mock):
+def test_fetch_historical_data_error_notification(db_session, redis_mock, prometheus_metrics_mock):
     mock_counter, mock_histogram = prometheus_metrics_mock
     symbol = "ERROR_SYM"
     interval = "1d"
     start_date = "2023-01-01"
     end_date = "2023-01-05"
 
+    redis_mock.get.return_value = None
+
     with patch('src.data_fetcher.load_historical_data', side_effect=Exception("Simulated DB error")):
-        with patch('src.utils.send_notification') as mock_send_notification:
-            with patch('src.data_fetcher.redis_client'): # Mockear el cliente de Redis
-                df = fetch_historical_data(symbol, interval, start_date, end_date)
-                
-                # Verificar que se devolvió un DataFrame vacío
-                assert df.empty
-                
-                # Verificar que la notificación fue enviada
-                mock_send_notification.assert_called_once_with(
-                    "Error en Adquisición de Datos",
-                    f"Error al obtener datos para {symbol} ({interval}) de {start_date} a {end_date}: Simulated DB error"
-                )
-                
-                # Verificar que las métricas de Prometheus fueron actualizadas
-                mock_counter.labels.assert_called_once_with(symbol=symbol, interval=interval)
-                mock_counter.labels.return_value.inc.assert_called_once()
-                mock_histogram.labels.assert_called_once_with(symbol=symbol, interval=interval)
-                mock_histogram.labels.return_value.time.assert_called_once()
+        with patch('src.data_fetcher.send_notification') as mock_send_notification:
+            df = fetch_historical_data(symbol, interval, start_date, end_date)
+            
+            assert df.empty
+            
+            mock_send_notification.assert_called_once_with(
+                "Error en Adquisición de Datos",
+                f"Error al obtener datos para {symbol} ({interval}) de {start_date} a {end_date}: Simulated DB error"
+            )
+            
+            mock_counter.labels.assert_called_once_with(symbol=symbol, interval=interval)
+            mock_counter.labels.return_value.inc.assert_called_once()
+            mock_histogram.labels.assert_called_once_with(symbol=symbol, interval=interval)
+            mock_histogram.labels.return_value.time.assert_called_once()
 

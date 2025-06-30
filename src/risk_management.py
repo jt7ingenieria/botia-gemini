@@ -3,6 +3,7 @@ import pandas as pd
 import logging
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
+from config import RISK_MANAGER_CONFIG # Importar la configuración
 
 logger = logging.getLogger(__name__)
 
@@ -14,18 +15,18 @@ class RiskManager:
     def _build_risk_model(self):
         """Construye el modelo de gestión de riesgo"""
         return MLPRegressor(
-            hidden_layer_sizes=(32, 16),
-            activation='relu',
-            solver='adam',
-            max_iter=1000,
-            random_state=42,
-            warm_start=True
+            hidden_layer_sizes=RISK_MANAGER_CONFIG["MLP_HIDDEN_LAYER_SIZES"],
+            activation=RISK_MANAGER_CONFIG["MLP_ACTIVATION"],
+            solver=RISK_MANAGER_CONFIG["MLP_SOLVER"],
+            max_iter=RISK_MANAGER_CONFIG["MLP_MAX_ITER"],
+            random_state=RISK_MANAGER_CONFIG["MLP_RANDOM_STATE"],
+            warm_start=RISK_MANAGER_CONFIG["MLP_WARM_START"]
         )
 
     def calculate_position_size(self, trade_history, current_balance, max_balance, atr, volatility, losing_streak, max_drawdown, commission_rate):
         """Calcula el tamaño de posición usando Kelly fraccionado y red neuronal"""
         # Obtener métricas recientes
-        recent_trades = trade_history[-20:] if len(trade_history) > 20 else trade_history
+        recent_trades = trade_history[-RISK_MANAGER_CONFIG["RECENT_TRADES_WINDOW"]:] if len(trade_history) > RISK_MANAGER_CONFIG["RECENT_TRADES_WINDOW"] else trade_history
         win_rate = 0.5
         avg_win = 1.0
         avg_loss = 1.0
@@ -47,7 +48,7 @@ class RiskManager:
             kelly_fraction = (win_rate - (1 - win_rate) / win_ratio) if win_ratio > 0 else 0.0
         
         # Aplicar fracción conservadora
-        kelly_fraction = max(0.0, min(kelly_fraction * 0.5, 0.2))  # Fracción de Kelly
+        kelly_fraction = max(0.0, min(kelly_fraction * RISK_MANAGER_CONFIG["KELLY_FRACTION_MULTIPLIER"], RISK_MANAGER_CONFIG["KELLY_FRACTION_MAX"]))  # Fracción de Kelly
         
         # Entradas para la red neuronal
         nn_inputs = [
@@ -89,7 +90,7 @@ class RiskManager:
 
     def train_risk_model(self, trade_history):
         """Entrena el modelo de gestión de riesgo con datos de operaciones"""
-        if len(trade_history) < 20:
+        if len(trade_history) < RISK_MANAGER_CONFIG["RECENT_TRADES_WINDOW"]:
             return False
         
         # Preparar datos de entrenamiento
@@ -102,7 +103,7 @@ class RiskManager:
                 # Objetivo: ratio entre tamaño de posición real y tamaño sugerido por Kelly
                 y.append(trade['actual_position_size'] / trade['kelly_size'])
         
-        if len(X) < 10:
+        if len(X) < RISK_MANAGER_CONFIG["MIN_TRAINING_SAMPLES"]:
             return False
         
         # Ajustar el scaler con los datos de entrenamiento antes de transformar

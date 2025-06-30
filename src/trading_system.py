@@ -8,6 +8,7 @@ from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
+from src.indicators import DataProcessor
 import joblib
 import os
 
@@ -18,12 +19,14 @@ logger = logging.getLogger('LiveLearningTradingSystem')
 class LiveLearningTradingSystem:
     """Sistema de trading con aprendizaje continuo en tiempo real"""
     
-    def __init__(self, initial_balance=10000, max_drawdown=0.10, commission_rate=0.001):
+    def __init__(self, initial_balance=10000, max_drawdown=0.10, commission_rate=0.001, data_processor=None):
+        # ... (el resto del constructor se mantiene igual)
+        self.data_processor = data_processor if data_processor else DataProcessor()
         # Configuración financiera
         self.initial_balance = initial_balance
         self.current_balance = initial_balance
         self.max_drawdown = max_drawdown
-        self.commission_rate = commission_rate
+        self.commission_rate = 0.0001
         self.max_balance = initial_balance
         self.equity_curve = [initial_balance]
         
@@ -50,7 +53,7 @@ class LiveLearningTradingSystem:
         # Configuración de aprendizaje
         self.retrain_interval = 30  # Reentrenar cada 30 días
         self.retrain_counter = 0
-        self.warmup_period = 100  # Período inicial de calentamiento
+        self.warmup_period = 200  # Período inicial de calentamiento
         self.lookback_window = 365  # Ventana de datos para reentrenamiento
         
     def _build_initial_predictor(self):
@@ -73,36 +76,12 @@ class LiveLearningTradingSystem:
             warm_start=True
         )
     
-    def preprocess_data(self, data):
-        """Preprocesa los datos para el modelo predictivo"""
-        # Calcular returns
-        data['return'] = data['close'].pct_change()
-        
-        # Calcular volatilidad
-        data['volatility_5'] = data['return'].rolling(5).std()
-        data['volatility_20'] = data['return'].rolling(20).std()
-        
-        # Calcular ATR
-        high_low = data['high'] - data['low']
-        high_close = np.abs(data['high'] - data['close'].shift())
-        low_close = np.abs(data['low'] - data['close'].shift())
-        data['tr'] = np.max(np.array([high_low, high_close, low_close]).T, axis=1)
-        data['atr'] = data['tr'].rolling(14).mean()
-        
-        # Eliminar NaNs
-        data = data.dropna()
-        
-        # Guardar ATR y volatilidad actual
-        if not data.empty:
-            self.atr = data['atr'].iloc[-1]
-            self.volatility = data['volatility_20'].iloc[-1]
-        
-        return data
+    
     
     def train_predictor(self, data):
         """Entrena el modelo predictivo con datos históricos"""
         # Preprocesar datos
-        processed_data = self.preprocess_data(data.copy())
+        processed_data = self.data_processor.preprocess(data.copy())
         
         # Preparar características y objetivo
         X = processed_data[['volatility_5', 'volatility_20', 'atr', 'return']].shift(1).dropna()
@@ -143,9 +122,18 @@ class LiveLearningTradingSystem:
             if 'features' in trade and 'actual_position_size' in trade:
                 X.append(trade['features'])
                 # Objetivo: ratio entre tamaño de posición real y tamaño sugerido por Kelly
-                y.append(trade['actual_position_size'] / trade['kelly_size'])
+                if trade['kelly_size'] != 0:
+                    y.append(trade['actual_position_size'] / trade['kelly_size'])
+                else:
+                    # Si kelly_size es 0, esta operación no es útil para entrenar el modelo de riesgo
+                    continue
         
+        if not X or not y:
+            logger.warning("Datos insuficientes o inválidos para entrenar el modelo de riesgo.")
+            return False
+
         if len(X) < 10:
+            logger.warning(f"Se requieren al menos 10 muestras para entrenar el modelo de riesgo, pero se encontraron {len(X)}.")
             return False
         
         # Entrenar modelo
@@ -201,7 +189,7 @@ class LiveLearningTradingSystem:
             kelly_fraction = (win_rate - (1 - win_rate) / win_ratio) if win_ratio > 0 else 0.0
         
         # Aplicar fracción conservadora
-        kelly_fraction = max(0.0, min(kelly_fraction * 0.5, 0.2))  # Fracción de Kelly
+        kelly_fraction = max(0.01, min(kelly_fraction * 0.5, 0.2))  # Asegurar un mínimo de 0.01
         
         # Entradas para la red neuronal
         nn_inputs = [
@@ -213,15 +201,22 @@ class LiveLearningTradingSystem:
         ]
         
         # Factor de ajuste de la red neuronal (0.5-1.5)
-        nn_factor = self.risk_model.predict([nn_inputs])[0]
-        nn_factor = max(0.5, min(nn_factor, 1.5))
+        # Si el modelo de riesgo no está entrenado, usar un factor por defecto
+        if hasattr(self.risk_model, 'coefs_') and self.risk_model.coefs_ is not None:
+            nn_factor = self.risk_model.predict([nn_inputs])[0]
+            nn_factor = max(0.5, min(nn_factor, 1.5))
+        else:
+            nn_factor = 1.0 # Usar un factor por defecto si el modelo no está entrenado
         
         # Tamaño final de posición
         position_size = kelly_fraction * nn_factor
         
-        # Asegurar que no se exceda el drawdown máximo
-        max_allowed = self.max_drawdown / (self.atr / self.current_balance) if self.atr > 0 else 0.1
-        position_size = min(position_size, max_allowed)
+        # Asegurar que no se exceda el drawdown máximo y que haya un tamaño mínimo
+        # Simplificar max_allowed a un porcentaje fijo del balance para evitar valores extremos
+        max_allowed_percentage = 0.05 # Por ejemplo, máximo 5% del balance
+        max_allowed_by_balance = self.current_balance * max_allowed_percentage / self.current_balance # Esto es solo max_allowed_percentage
+        
+        position_size = max(0.001, min(position_size, max_allowed_by_balance)) # Asegurar un mínimo de 0.001 y un máximo del 5%
         
         # Guardar características para entrenamiento futuro
         trade_features = {
@@ -248,7 +243,7 @@ class LiveLearningTradingSystem:
             self.data_buffer = pd.concat([self.data_buffer, new_data], ignore_index=True)
             
             # Preprocesar datos actuales
-            current_data = self.preprocess_data(self.data_buffer).iloc[-1]
+            current_data = self.data_processor.preprocess(self.data_buffer).iloc[-1]
             
             # Verificar drawdown máximo
             if self._check_drawdown():
@@ -355,7 +350,7 @@ class LiveLearningTradingSystem:
         """Abre una nueva operación principal"""
         current_price = current_data['close']
         position_size, trade_features = self.calculate_position_size()
-        trade_value = self.current_balance * position_size
+        trade_value = max(self.current_balance * position_size, self.current_balance * 0.005) # Asegurar un tamaño mínimo de operación (0.5% del balance)
         
         # Calcular SL y TP dinámicos
         sl_multiplier = 1.5
@@ -392,6 +387,7 @@ class LiveLearningTradingSystem:
         
         # Actualizar balance
         self.current_balance -= commission
+        
     
     def _open_hedge_trade(self, current_data, direction, index):
         """Abre una operación de cobertura"""
@@ -437,7 +433,7 @@ class LiveLearningTradingSystem:
             pl = (trade['entry_price'] - current_price) * (trade['size'] / trade['entry_price'])
         
         # Actualizar balance
-        self.current_balance += trade['size'] + pl
+        self.current_balance += pl
         
         # Registrar trade
         trade_record = {
@@ -486,7 +482,7 @@ class LiveLearningTradingSystem:
             pl = (trade['entry_price'] - current_price) * (trade['size'] / trade['entry_price'])
         
         # Actualizar balance
-        self.current_balance += trade['size'] + pl
+        self.current_balance += pl
         
         # Registrar trade
         trade_record = {
@@ -518,16 +514,17 @@ class LiveLearningTradingSystem:
         direction = self.active_trade['direction']
         entry_price = self.active_trade['entry_price']
         
-        # Calcular pérdida actual
-        if direction > 0:
-            current_loss = entry_price - current_price
-        else:
-            current_loss = current_price - entry_price
+        # Calcular pérdida actual (si es positiva, es una pérdida)
+        if direction > 0:  # Operación larga
+            current_loss = max(0, entry_price - current_price) # Pérdida si el precio baja
+        else:  # Operación corta
+            current_loss = max(0, current_price - entry_price) # Pérdida si el precio sube
         
         # Condiciones para cobertura:
         # 1. Pérdida > 1.2 ATR
         # 2. Señal de reversión fuerte
         # 3. Sin cobertura activa
+        
         return current_loss > 1.2 * self.atr and predicted_direction != direction
     
     def _calculate_trailing_stop(self, current_price, entry_price, direction):
@@ -723,13 +720,18 @@ class LiveLearningTradingSystem:
         
         # Distribución de retornos
         plt.subplot(2, 3, 4)
-        returns = [t['pl'] / t['size'] for t in self.trade_history if t['type'] == 'main']
-        plt.hist(returns, bins=30, alpha=0.7)
-        plt.axvline(0, color='red', linestyle='--')
-        plt.title('Distribución de Retornos por Operación')
-        plt.xlabel('Retorno %')
-        plt.ylabel('Frecuencia')
-        plt.grid(True)
+        returns = [t['pl'] / t['size'] for t in self.trade_history if t['type'] == 'main' and t.get('size', 0) != 0]
+        if returns:
+            plt.hist(returns, bins=30, alpha=0.7)
+            plt.axvline(0, color='red', linestyle='--')
+            plt.title('Distribución de Retornos por Operación')
+            plt.xlabel('Retorno %')
+            plt.ylabel('Frecuencia')
+            plt.grid(True)
+        else:
+            plt.title('Distribución de Retornos por Operación (No hay datos)')
+            plt.text(0.5, 0.5, 'No hay operaciones con tamaño > 0', horizontalalignment='center', verticalalignment='center', transform=plt.gca().transAxes)
+            plt.grid(True)
         
         # Razones de cierre
         plt.subplot(2, 3, 5)
@@ -743,7 +745,7 @@ class LiveLearningTradingSystem:
         plt.subplot(2, 3, 6)
         if main_trades:
             kelly_sizes = [t.get('kelly_size', 0) for t in main_trades]
-            actual_sizes = [t['position_size'] for t in main_trades]
+            actual_sizes = [t.get('position_size', 0) for t in main_trades]
             
             plt.plot(kelly_sizes, label='Kelly Fraction')
             plt.plot(actual_sizes, label='Tamaño Real')

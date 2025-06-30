@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt # Importar matplotlib
 from src.data_fetcher import generate_market_data # Importar la función de generación de datos
 from src.trading_system import LiveLearningTradingSystem # Importar la clase principal del sistema
 from src.utils import log_message
+from config import BOT_CONFIG # Importar la configuración del bot
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -15,13 +16,13 @@ def main():
     log_message("Iniciando el bot de trading...")
 
     # Generar datos de mercado
-    market_data = generate_market_data(num_points=1000)
+    market_data = generate_market_data(num_points=BOT_CONFIG["num_market_data_points"])
     
     # Crear sistema de trading
-    trading_system = LiveLearningTradingSystem(commission_rate=0.001)
+    trading_system = LiveLearningTradingSystem(commission_rate=BOT_CONFIG["commission_rate"])
     
     # Ejecutar backtesting
-    results = trading_system.run_backtest(market_data, "trading_system_state.joblib")
+    results = trading_system.run_backtest(market_data, BOT_CONFIG["trading_system_state_file"])
     
     # Mostrar resultados
     print("\n" + "="*60)
