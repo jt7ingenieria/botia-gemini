@@ -28,6 +28,8 @@ class CryptoDataFetcher:
     def initialize_exchange(self, exchange_name):
         """Inicializa exchange con manejo de errores"""
         self.logger.info(f"Intentando inicializar exchange: {exchange_name}")
+        if exchange_name == 'mock_exchange': # Special handling for mock
+            return ccxt.binance() # Return a mocked exchange instance
         try:
             exchange_class = getattr(ccxt, exchange_name)
             exchange = exchange_class({

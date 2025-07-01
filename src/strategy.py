@@ -13,7 +13,7 @@ from scipy.stats import norm, poisson
 from joblib import dump, load
 import os
 
-from src.indicators import DataProcessor # Importar DataProcessor
+from .indicators import DataProcessor # Importar DataProcessor
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -243,6 +243,7 @@ class FinancialPredictor:
                 current_data = pd.concat([current_data, pd.DataFrame([new_row])], ignore_index=True)
         
         return np.array(predictions)
+        logger.info(f"Prediction completed. Predicted prices: {predictions}")
 
     def save_model(self):
         """Guarda el estado completo del predictor."""

@@ -58,7 +58,7 @@ def test_preprocess(sample_dataframe):
     expected_columns = [
         'open', 'high', 'low', 'close', 'volume', # Añadido 'volume'
         'ha_open', 'ha_high', 'ha_low', 'ha_close',
-        'returns', 'volatility_5', 'volatility_10', 'volatility_20', 'atr', 'rsi', 'ema12', 'ema26', 'macd', 'signal' # Añadido 'volatility_20', 'atr'
+        'returns', 'volatility_5', 'volatility_10', 'volatility_20', 'atr', 'rsi', 'ema_fast', 'ema_slow', 'macd', 'signal' # Corrected EMA names
     ]
     for col in expected_columns:
         assert col in processed_df.columns

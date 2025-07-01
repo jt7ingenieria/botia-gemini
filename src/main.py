@@ -7,12 +7,76 @@ from .data_fetcher import generate_market_data # Importar la función de generac
 from .trading_system import LiveLearningTradingSystem # Importar la clase principal del sistema
 from .utils import log_message
 from config import BOT_CONFIG, STRATEGY_CONFIG, INDICATORS_CONFIG, RISK_MANAGER_CONFIG # Importar todas las configuraciones
+from typing import Optional
 
-# Configurar logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# Configurar logging avanzado
+def setup_logging() -> logging.Logger:
+    """
+    Configura el sistema de logging para la aplicación con diferentes niveles.
+    
+    Configura:
+    - Handler para consola (nivel INFO)
+    - Handler para archivo (nivel DEBUG)
+    - Formato estándar con timestamp
+    
+    Returns:
+        logging.Logger: Logger configurado con handlers para consola y archivo
+    """
+    logger = logging.getLogger('trading_bot')
+    logger.setLevel(logging.DEBUG)
+    
+    # Configurar formato
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    
+    # Handler para consola (solo INFO)
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(formatter)
+    
+    # Handler para archivo (DEBUG)
+    file_handler = logging.FileHandler('trading_bot.log')
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(formatter)
+    
+    # Añadir handlers
+    logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
+    
+    # Formato común
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    
+    # Handler para consola (solo INFO)
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(formatter)
+    
+    # Handler para archivo (DEBUG)
+    file_handler = logging.FileHandler('trading_bot.log', mode='a')
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(formatter)
+    
+    # Limpiar handlers existentes y agregar los nuevos
+    logger.handlers = []
+    logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
+    
+    return logger
 
-def main(config_override=None, run_optimization=False, optimization_phase='all'):
+logger = setup_logging()
+
+def main(config_override: dict = None, run_optimization: bool = False, optimization_phase: str = 'all', market_data: Optional[pd.DataFrame] = None) -> None:
+    """
+    Función principal que inicia el bot de trading.
+    
+    Args:
+        config_override (dict, optional): Configuración personalizada para sobreescribir valores por defecto.
+        run_optimization (bool, optional): Si es True, ejecuta optimización de parámetros.
+        optimization_phase (str, optional): Fase de optimización a ejecutar ('all', 'indicators', 'strategy').
+        market_data (pd.DataFrame, optional): Datos de mercado a utilizar. Si es None, se generarán.
+    
+    Returns:
+        None
+    """
     # Crear copias mutables de las configuraciones
     bot_config = BOT_CONFIG.copy()
     strategy_config = STRATEGY_CONFIG.copy()
@@ -26,10 +90,11 @@ def main(config_override=None, run_optimization=False, optimization_phase='all')
         indicators_config.update(config_override.get("INDICATORS_CONFIG", {}))
         risk_manager_config.update(config_override.get("RISK_MANAGER_CONFIG", {}))
 
-    log_message("Iniciando el bot de trading...")
+    logger.info("Iniciando el bot de trading...")
 
-    # Generar datos de mercado
-    market_data = generate_market_data(num_points=bot_config["num_market_data_points"])
+    # Generar datos de mercado si no se proporcionan
+    if market_data is None:
+        market_data = generate_market_data() # No longer needs num_points
     
     if run_optimization:
         from optimize_advanced import AdvancedOptimizer
@@ -104,7 +169,7 @@ def main(config_override=None, run_optimization=False, optimization_phase='all')
         else:
             if isinstance(v, float):
                 print(f"{k.replace('_', ' ').title()}: {v*100 if 'rate' in k or 'drawdown' in k else v:.4f}"
-                      f"{'%' if 'rate' in k or 'drawdown' in k else ''}")
+                      f"%{'%' if 'rate' in k or 'drawdown' in k else ''}")
             else:
                 print(f"{k.replace('_', ' ').title()}: {v}")
     
@@ -125,7 +190,7 @@ def main(config_override=None, run_optimization=False, optimization_phase='all')
         plt.grid(True)
         plt.show()
     
-    log_message("Bot de trading finalizado.")
+    logger.info("Bot de trading finalizado.")
     return results # Devolver los resultados del backtesting
 
 if __name__ == "__main__":

@@ -18,14 +18,17 @@ class DataProcessor:
         """Calcula velas Heikin-Ashi vectorizado."""
         ha_df = df.copy()
         ha_df['ha_close'] = (df[['open', 'high', 'low', 'close']].mean(axis=1))
+        ha_df['ha_open'] = np.nan # Inicializar la columna ha_open
         
         # Calcular ha_open de forma vectorizada
-        ha_open = np.zeros(len(df))
-        ha_open[0] = (df['open'].iloc[0] + df['close'].iloc[0]) / 2
-        for i in range(1, len(df)):
-            ha_open[i] = (ha_open[i-1] + ha_df['ha_close'].iloc[i-1]) / 2
+        # El primer ha_open es el promedio del open y close del primer día
+        ha_df.loc[0, 'ha_open'] = (df['open'].iloc[0] + df['close'].iloc[0]) / 2
         
-        ha_df['ha_open'] = ha_open
+        # Para los días siguientes, ha_open = (ha_open(anterior) + ha_close(anterior)) / 2
+        # Usamos un bucle para esto ya que depende del valor anterior
+        for i in range(1, len(ha_df)):
+            ha_df.loc[i, 'ha_open'] = (ha_df['ha_open'].iloc[i-1] + ha_df['ha_close'].iloc[i-1]) / 2
+        
         ha_df['ha_high'] = ha_df[['high', 'ha_open', 'ha_close']].max(axis=1)
         ha_df['ha_low'] = ha_df[['low', 'ha_open', 'ha_close']].min(axis=1)
         return ha_df
@@ -71,10 +74,11 @@ class DataProcessor:
         df['tr'] = np.max(np.array([high_low, high_close, low_close]).T, axis=1)
         df['atr'] = df['tr'].rolling(atr_window).mean()
         
-        return df
+        return df.dropna()
 
     def preprocess(self, df):
         """Pipeline completo de preprocesamiento."""
         ha_df = self.calculate_heikin_ashi(df)
         processed_df = self.add_technical_features(ha_df)
+        logger.info(f"Processed data shape: {processed_df.shape}")
         return processed_df
